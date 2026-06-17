@@ -821,6 +821,7 @@ function initFirebase() {
 // STATE
 // ═══════════════════════════════════════════════
 let currentUser = null; // {uid, email, name, role, workerId}
+let _regName = null;   // имя из формы регистрации, передаётся в onAuthStateChanged
 let cfg = { settings:{periodStartDay:21,periodEndDay:20,vatRate:16,companyName:'ТОО'}, workers:[], equipment:[], objects:[], partners:[] };
 let pd = { shifts:{}, incomeItems:[], expenses:[], payments:{} };
 let curYear, curEM;
@@ -871,13 +872,24 @@ async function doRegister() {
   const pw = document.getElementById('regPassword').value;
   if (!name||!email||!pw) { document.getElementById('regError').textContent = 'Заполните все поля'; return; }
   try {
-    const snap = await db.collection('users').limit(1).get();
-    const isFirst = snap.empty;
-    const cred = await auth.createUserWithEmailAndPassword(email, pw);
-    await db.collection('users').doc(cred.user.uid).set({ email, name, role: isFirst?'admin':'pending', workerId:'' });
+    // Шаг 1: создаём аккаунт в Firebase Authentication.
+    // Firestore НЕ трогаем — это вызвало бы ошибку прав (пользователь ещё не авторизован).
+    // Всю логику Firestore (роль, профиль) берёт onAuthStateChanged после входа.
+    _regName = name;
+    await auth.createUserWithEmailAndPassword(email, pw);
+    // После этой строки onAuthStateChanged сработает автоматически и создаст users/{uid}
   } catch(e) {
-    const m = {'auth/email-already-in-use':'Email уже используется','auth/weak-password':'Пароль слишком простой (мин. 6 символов)','auth/invalid-email':'Неверный email'};
-    document.getElementById('regError').textContent = m[e.code] || e.message;
+    _regName = null;
+    console.error('[doRegister] error:', e);
+    console.error('[doRegister] code:', e.code);
+    console.error('[doRegister] message:', e.message);
+    const m = {
+      'auth/email-already-in-use': 'Email уже используется',
+      'auth/weak-password': 'Пароль слишком простой (мин. 6 символов)',
+      'auth/invalid-email': 'Неверный email',
+      'auth/operation-not-allowed': 'Email/Password аутентификация не включена в Firebase Console → Authentication → Sign-in method',
+    };
+    document.getElementById('regError').textContent = m[e.code] || ('Ошибка [' + e.code + ']: ' + e.message);
   }
 }
 
@@ -2409,12 +2421,17 @@ function init(){
       try{
         const snap=await db.collection('users').doc(user.uid).get();
         if(snap.exists){
+          // Профиль уже есть — просто читаем
           currentUser={uid:user.uid,email:user.email,...snap.data()};
+          _regName=null;
         }else{
-          // First user ever → make admin
+          // Профиля нет — создаём (первый вход после регистрации)
+          // Только сейчас пользователь авторизован → Firestore-запрос работает
           const any=await db.collection('users').limit(1).get();
           const role=any.empty?'admin':'pending';
-          currentUser={uid:user.uid,email:user.email,name:user.displayName||user.email,role,workerId:''};
+          const name=_regName||user.displayName||user.email;
+          _regName=null;
+          currentUser={uid:user.uid,email:user.email,name,role,workerId:''};
           await db.collection('users').doc(user.uid).set(currentUser);
         }
         if(currentUser.role==='pending'){
