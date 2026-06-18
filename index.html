@@ -268,6 +268,8 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 .pay-badge{display:inline-flex;align-items:center;gap:3px;border-radius:10px;padding:2px 8px;font-size:10px;font-weight:700}
 .pay-paid{background:rgba(34,211,160,.15);color:var(--green);border:1px solid rgba(34,211,160,.3)}
 .pay-pending{background:rgba(245,166,35,.15);color:var(--yellow);border:1px solid rgba(245,166,35,.3)}
+.pay-approved{background:rgba(56,189,248,.15);color:var(--blue);border:1px solid rgba(56,189,248,.3)}
+.pay-rejected{background:rgba(240,92,110,.15);color:var(--red);border:1px solid rgba(240,92,110,.3)}
 .pay-history{background:var(--card2);border-radius:6px;padding:8px 10px;margin-top:4px;font-size:11px}
 .pay-hist-entry{padding:4px 0;border-bottom:1px solid #1e2235}
 .pay-hist-entry:last-child{border:none}
@@ -447,6 +449,7 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 <!-- ═══════════ РАБОТНИКИ ═══════════ -->
 <div id="pane-workers" class="tab-pane">
   <div class="ph"><h2>Работники</h2><button class="btn btn-primary" onclick="openWorkerModal()">+ Добавить</button></div>
+  <div id="pendingAdvancesPanel" style="display:none;margin-bottom:14px"></div>
   <div class="tbl-wrap"><table>
     <thead><tr><th>Имя</th><th>Тип</th><th>Техника</th><th class="tr">ЗП/мес</th><th class="tr">За ночи</th><th class="tr">Подмены</th><th class="tr">Итого нач.</th><th class="tr">Выплачено</th><th class="tr" style="color:var(--red)">Остаток</th><th></th></tr></thead>
     <tbody id="workersTbl"></tbody>
@@ -519,6 +522,7 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 <!-- ═══════════ НАСТРОЙКИ ═══════════ -->
 <div id="pane-settings" class="tab-pane">
   <div class="ph"><h2>Настройки</h2></div>
+  <div id="settingsViewOnlyNote" style="display:none;background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.3);color:var(--yellow);border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px">👁 Режим просмотра — изменение системных настроек доступно только администратору</div>
   <div class="set-group">
     <h3>Период закрытия табеля</h3>
     <div class="set-row"><span class="set-label">День начала периода (число месяца)</span>
@@ -793,6 +797,24 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
   </div>
 </div>
 
+<!-- ADVANCE REQUEST MODAL (Worker) -->
+<div class="mo hidden" id="moAdvanceReq" onclick="closeMoCheck('moAdvanceReq',event)">
+  <div class="mo-box">
+    <div class="mo-title">Запросить аванс</div>
+    <div class="mo-sub">Заявка будет отправлена администратору на рассмотрение</div>
+    <div class="fg"><label class="fl">Сумма ₸</label><input class="fi" type="number" id="arAmount" placeholder="0"></div>
+    <div class="fg">
+      <label class="fl">Комментарий <span style="color:var(--red)">*</span></label>
+      <input class="fi" id="arNote" placeholder="на что нужен аванс...">
+    </div>
+    <div id="arError" style="color:var(--red);font-size:12px;min-height:18px"></div>
+    <div class="mo-acts">
+      <button class="btn btn-secondary" onclick="closeMo('moAdvanceReq')">Отмена</button>
+      <button class="btn btn-primary" onclick="submitAdvanceRequest()">Отправить заявку</button>
+    </div>
+  </div>
+</div>
+
 <!-- PAYMENT MODAL -->
 <div class="mo hidden" id="moPay" onclick="closeMoCheck('moPay',event)">
   <div class="mo-box">
@@ -805,7 +827,9 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
     <div class="fg"><label class="fl">Статус</label>
       <select class="fi" id="pyStatus">
         <option value="paid">✓ Выдан</option>
-        <option value="pending">⏳ Ожидает выдачи</option>
+        <option value="approved">👍 Одобрен (не выдан)</option>
+        <option value="pending">⏳ Ожидает рассмотрения</option>
+        <option value="rejected">✕ Отклонён</option>
       </select>
     </div>
     <div class="fg">
@@ -830,16 +854,25 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
     <div class="fg" id="muEmailGroup"><label class="fl">Email</label><input class="fi" id="muEmail" type="email" placeholder="user@company.kz"></div>
     <div class="fg" id="muPasswordGroup"><label class="fl">Временный пароль</label><input class="fi" id="muPassword" type="password" placeholder="Минимум 6 символов"></div>
     <div class="fg"><label class="fl">Роль</label>
-      <select class="fi" id="muRole" onchange="toggleWorkerField()">
+      <select class="fi" id="muRole" onchange="toggleRoleFields()">
         <option value="admin">Admin — Полный доступ</option>
+        <option value="owner">Owner — Просмотр всего, подтверждения</option>
         <option value="dispatcher" selected>Dispatcher — Смены и техника</option>
         <option value="accountant">Accountant — Финансы</option>
         <option value="worker">Worker — Только свои смены</option>
+        <option value="partner">Partner — Свои начисления</option>
         <option value="pending">Pending — Без доступа</option>
       </select></div>
     <div class="fg" id="muWorkerGroup" style="display:none">
       <label class="fl">Привязать к работнику (для роли Worker)</label>
       <select class="fi" id="muWorker"><option value="">— не выбрано —</option></select></div>
+    <div class="fg" id="muPartnerGroup" style="display:none">
+      <label class="fl">Привязать к партнеру (для роли Partner)</label>
+      <select class="fi" id="muPartner"><option value="">— не выбрано —</option></select></div>
+    <div class="fg" id="muEquipGroup" style="display:none">
+      <label class="fl">Закреплённая техника (для роли Dispatcher)</label>
+      <select class="fi" id="muEquip" multiple style="min-height:90px"></select>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">Ctrl/Cmd+клик — выбрать несколько. Пусто = видит всю технику.</div></div>
     <div id="muError" style="color:var(--red);font-size:12px;min-height:18px"></div>
     <div class="mo-acts">
       <button class="btn btn-secondary" onclick="closeMo('moUser')">Отмена</button>
@@ -921,12 +954,14 @@ let _cfgUnsubs = [], _pdUnsubs = [], _renderTimer = null;
 // ═══════════════════════════════════════════════
 // AUTH
 // ═══════════════════════════════════════════════
-const ROLE_LABELS = { admin:'Администратор', dispatcher:'Диспетчер', worker:'Крановщик', accountant:'Бухгалтер', pending:'Ожидает' };
+const ROLE_LABELS = { admin:'Администратор', owner:'Владелец', dispatcher:'Диспетчер', worker:'Крановщик', accountant:'Бухгалтер', partner:'Партнер', pending:'Ожидает' };
 const ROLE_TABS = {
   admin:      ['dashboard','smeny','workers','equip','objects','partners','income','expenses','summary','settings'],
+  owner:      ['dashboard','smeny','workers','equip','objects','partners','income','expenses','summary','settings'],
   dispatcher: ['dashboard','smeny','workers','equip','objects'],
   worker:     ['dashboard','myshifts','workers'],
   accountant: ['dashboard','income','expenses','summary','settings'],
+  partner:    ['dashboard'],
   pending:    []
 };
 
@@ -1082,18 +1117,42 @@ async function fbSavePayment(pay)  {
 function can(p) {
   const r = currentUser?.role;
   const map = {
-    edit_shifts:   ['admin','dispatcher'],
-    edit_workers:  ['admin'],
-    view_salaries: ['admin','worker'],
-    edit_config:   ['admin'],
-    view_income:   ['admin','accountant'],
-    edit_income:   ['admin'],
-    view_expenses: ['admin','accountant'],
-    edit_expenses: ['admin'],
-    view_summary:  ['admin','accountant'],
-    manage_users:  ['admin'],
+    edit_shifts:     ['admin','owner','dispatcher'],
+    approve_shifts:  ['admin','owner','dispatcher'],
+    edit_workers:    ['admin'],
+    manage_payments: ['admin','owner'],
+    view_salaries:   ['admin','owner','worker'],
+    edit_config:     ['admin'],
+    view_income:     ['admin','owner','accountant'],
+    edit_income:     ['admin'],
+    view_expenses:   ['admin','owner','accountant'],
+    edit_expenses:   ['admin'],
+    view_summary:    ['admin','owner','accountant'],
+    manage_users:    ['admin'],
+    manage_roles:    ['admin'],
+    manage_equip:    ['admin'],
+    export_data:     ['admin','owner'],
   };
   return (map[p]||[]).includes(r);
+}
+
+// Dispatcher equipment scoping — empty/missing assignedEquipmentIds = unrestricted (backward compat)
+function dispatcherEquipIds(){ return currentUser?.assignedEquipmentIds||[]; }
+function visibleEquipment(){
+  if(currentUser?.role==='dispatcher'){
+    const ids=dispatcherEquipIds();
+    if(ids.length)return cfg.equipment.filter(e=>ids.includes(e.id));
+  }
+  return cfg.equipment;
+}
+function canSeeEquip(equipId){
+  if(currentUser?.role!=='dispatcher')return true;
+  const ids=dispatcherEquipIds();
+  return !ids.length||ids.includes(equipId);
+}
+function canApproveShiftFor(equipId){
+  if(!can('approve_shifts'))return false;
+  return canSeeEquip(equipId);
 }
 
 function applyRoleVisibility() {
@@ -1108,7 +1167,7 @@ function applyRoleVisibility() {
     if (first) showTab(first, document.querySelector(`.tab-btn[onclick*="'${first}'"]`));
   }
   const us = document.getElementById('usersSection');
-  if (us) us.style.display = role==='admin' ? '' : 'none';
+  if (us) us.style.display = can('manage_users') ? '' : 'none';
   const badge = document.getElementById('userBadge');
   if (badge && currentUser) {
     badge.style.display = '';
@@ -1276,16 +1335,17 @@ let shiftOptVal=0;
 
 function renderShifts(){
   if(can('edit_shifts'))renderPendingShifts();
+  const eqList=visibleEquipment();
   const sel=document.getElementById('shiftEquipSel');
   const prev=sel.value;
-  sel.innerHTML='<option value="all">Вся техника</option>'+cfg.equipment.map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
-  if(prev&&(prev==='all'||cfg.equipment.find(e=>e.id===prev)))sel.value=prev;
+  sel.innerHTML='<option value="all">Вся техника</option>'+eqList.map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
+  if(prev&&(prev==='all'||eqList.find(e=>e.id===prev)))sel.value=prev;
   if(sel.value==='all'){
-    if(!cfg.equipment.length){document.getElementById('shiftGrid').innerHTML='<tr><td class="empty" colspan="2">Добавьте технику в разделе «Техника»</td></tr>';document.getElementById('shiftSummary').innerHTML='';return;}
+    if(!eqList.length){document.getElementById('shiftGrid').innerHTML='<tr><td class="empty" colspan="2">Нет доступной техники</td></tr>';document.getElementById('shiftSummary').innerHTML='';return;}
     _drawShiftGridAll();
     _drawShiftSummaryAll();
   } else {
-    const equip=cfg.equipment.find(e=>e.id===sel.value);
+    const equip=eqList.find(e=>e.id===sel.value);
     if(!equip)return;
     _drawShiftGrid(equip);
     _drawShiftSummary(equip);
@@ -1307,7 +1367,7 @@ function _drawShiftGridAll(){
   h+='</tr><tr>';
   for(const dt of dates){const dow=new Date(dt.y,dt.m-1,dt.d).getDay();const we=dow===0||dow===6;h+=`<th class="dh${we?' we':''}" style="font-size:9px;color:#3d4460">${DOW[dow]}</th>`;}
   h+='</tr></thead><tbody>';
-  for(const equip of cfg.equipment){
+  for(const equip of visibleEquipment()){
     const cs=pd.shifts[equip.id]||{};
     const op=cfg.workers.find(w=>w.id===equip.primaryWorkerId);
     let nightCount=0;
@@ -1336,7 +1396,7 @@ function _drawShiftSummaryAll(){
   const dates=getPeriodDates(curYear,curEM);const n=dates.length;
   let html='<div style="display:flex;gap:10px;flex-wrap:wrap">';
   let totalNights=0;
-  for(const e of cfg.equipment){
+  for(const e of visibleEquipment()){
     const cs=pd.shifts[e.id]||{};let nights=0;
     for(const k in cs){const t=cs[k].type||0;if(t===2||t===3)nights++;}
     totalNights+=nights;
@@ -1484,15 +1544,18 @@ function calcWorkerEarnings(w){
   const overBonus=overCount*(dRate||nRate);
   const subBonus=subNightCount*nRate+subDayCount*dRate;
   const totalAccrued=base+nightBonus+overBonus+subBonus;
-  const pays=(pd.payments[w.id]||[]).reduce((s,p)=>s+p.amount,0);
+  const pays=(pd.payments[w.id]||[]).reduce((s,p)=>s+((!p.status||p.status==='paid')?p.amount:0),0);
+  const pendingAdvances=(pd.payments[w.id]||[]).filter(p=>p.status==='pending'||p.status==='approved').reduce((s,p)=>s+p.amount,0);
   const balance=totalAccrued-pays;
-  return{base,nightCount,nightBonus,overCount,overBonus,subNightCount,subDayCount,subBonus,totalAccrued,pays,balance};
+  return{base,nightCount,nightBonus,overCount,overBonus,subNightCount,subDayCount,subBonus,totalAccrued,pays,pendingAdvances,balance};
 }
 
 function renderWorkers(){
   const role = currentUser?.role;
   const addBtn = document.querySelector('#pane-workers .ph .btn-primary');
   if(addBtn) addBtn.style.display = role==='admin' ? '' : 'none';
+  if(can('manage_payments'))renderPendingAdvances();
+  else{const pp=document.getElementById('pendingAdvancesPanel');if(pp)pp.style.display='none';}
 
   // Dispatcher: name+type+equipment only, no salary
   if(role==='dispatcher'){
@@ -1585,7 +1648,13 @@ function openWorkerDetail(wId){
   h+=`<div class="wdet-row total"><span>Итого начислено</span><span style="color:var(--blue)">${fmt(earn.totalAccrued)} ₸</span></div>`;
   h+='</div>';
 
-  const canEditPay=can('edit_workers');
+  const canEditPay=can('manage_payments');
+  const PAY_BADGE={
+    pending:'<span class="pay-badge pay-pending">⏳ Ожидает</span>',
+    approved:'<span class="pay-badge pay-approved">👍 Одобрен</span>',
+    rejected:'<span class="pay-badge pay-rejected">✕ Отклонён</span>',
+    paid:'<span class="pay-badge pay-paid">✓ Выдан</span>'
+  };
   h+='<div class="wdet-section"><h4>История выплат</h4>';
   if(!pays.length){h+='<div style="color:var(--muted);font-size:13px;padding:8px 0">Выплат не было</div>';}
   else{
@@ -1593,11 +1662,13 @@ function openWorkerDetail(wId){
     h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
     h+=`<tr style="color:var(--muted)"><th style="text-align:left;padding:4px 0">Дата</th><th style="text-align:left">Назначение</th><th style="text-align:left">Статус</th><th style="text-align:right">Выплата</th><th style="text-align:right">Остаток</th>${canEditPay?'<th></th>':''}</tr>`;
     for(const p of pays){
-      running-=p.amount;
+      const counted=(!p.status||p.status==='paid');
+      if(counted)running-=p.amount;
       const rc=running>0?'rb-neg':'rb-pos';
-      const stBadge=p.status==='pending'?'<span class="pay-badge pay-pending">⏳ Ожидает</span>':'<span class="pay-badge pay-paid">✓ Выдан</span>';
+      const stBadge=PAY_BADGE[p.status||'paid']||PAY_BADGE.paid;
+      const whoNote=p.createdByName?`<div style="font-size:10px;color:var(--muted);margin-top:2px">от ${p.createdByName}</div>`:'';
       const editBtn=canEditPay?`<td style="padding:3px 0"><button class="edit-btn" onclick="closeMo('moWorkerDetail');editPayment('${w.id}','${p._docId}')">✏</button></td>`:'';
-      h+=`<tr style="border-top:1px solid #1e2235"><td style="padding:5px 0">${fmtDate(p.date)}</td><td style="color:var(--muted)">${p.note||'—'}</td><td>${stBadge}</td><td style="text-align:right;color:var(--green)">−${fmt(p.amount)} ₸</td><td style="text-align:right" class="${rc}">${running>0?'+':''}${fmt(running)} ₸</td>${editBtn}</tr>`;
+      h+=`<tr style="border-top:1px solid #1e2235"><td style="padding:5px 0">${fmtDate(p.date)}</td><td style="color:var(--muted)">${p.note||'—'}${whoNote}</td><td>${stBadge}</td><td style="text-align:right;color:var(--green)">−${fmt(p.amount)} ₸</td><td style="text-align:right" class="${rc}">${running>0?'+':''}${fmt(running)} ₸</td>${editBtn}</tr>`;
     }
     h+='</table>';
   }
@@ -1608,7 +1679,7 @@ function openWorkerDetail(wId){
   allHist.sort((a,b)=>b.at.localeCompare(a.at));
   if(allHist.length){
     const FLAB={amount:'Сумма',date:'Дата',note:'Комментарий',status:'Статус'};
-    const SLAB={paid:'Выдан',pending:'Ожидает'};
+    const SLAB={paid:'Выдан',pending:'Ожидает',approved:'Одобрен',rejected:'Отклонён'};
     h+='<div class="wdet-section"><h4>История изменений</h4><div class="pay-history">';
     for(const e of allHist.slice(0,15)){
       const dt=e.at.split('T');
@@ -1700,10 +1771,13 @@ async function savePayment(){
   const date=document.getElementById('pyDate').value;
   if(!amount){alert('Введите сумму');return;}
   if(!note){document.getElementById('pyNoteError').textContent='Комментарий обязателен';return;}
+  if(status==='paid'&&!note){document.getElementById('pyNoteError').textContent='При выдаче аванса комментарий обязателен';return;}
   document.getElementById('pyNoteError').textContent='';
   closeMo('moPay');
+  const now=new Date().toISOString();
+  const who=currentUser.name||currentUser.email;
   if(docId){
-    const existing=(pd.payments[wId]||[]).find(p=>p._docId===docId);
+    const existing=findPaymentByDocId(docId);
     const changes=[];
     if(existing){
       if(existing.amount!==amount)changes.push({field:'amount',old:existing.amount,new:amount});
@@ -1711,15 +1785,117 @@ async function savePayment(){
       if((existing.note||'')!==note)changes.push({field:'note',old:existing.note||'',new:note});
       if((existing.status||'paid')!==status)changes.push({field:'status',old:existing.status||'paid',new:status});
     }
-    const updateData={amount,date,note,status};
+    const updateData={amount,date,note,status,updatedAt:now,updatedBy:who};
+    if(status==='approved'&&existing?.status!=='approved')updateData.approvedBy=who;
+    if(status==='paid'&&existing?.status!=='paid')updateData.paidBy=who;
     if(changes.length){
-      const entry={at:new Date().toISOString(),by:currentUser.name||currentUser.email,byUid:currentUser.uid,changes};
+      const entry={at:now,by:who,byUid:currentUser.uid,changes};
       updateData.history=[...(existing?.history||[]),entry];
     }
     try{await db.collection('payments').doc(docId).update(updateData);}catch(e){fbErr(e);}
   }else{
-    fbSavePayment({workerId:wId,date,amount,note,status,history:[]});
+    fbSavePayment({workerId:wId,date,amount,note,status,createdBy:currentUser.uid,createdByName:who,createdAt:now,history:[]});
   }
+}
+
+function findPaymentByDocId(docId){
+  for(const pays of Object.values(pd.payments)){
+    const f=pays.find(p=>p._docId===docId);
+    if(f)return f;
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════════════
+// ADVANCE REQUESTS (Worker self-service + Admin/Owner review)
+// ═══════════════════════════════════════════════
+function openAdvanceRequestModal(){
+  const myW=cfg.workers.find(w=>w.id===currentUser?.workerId);
+  if(!myW){alert('Вы не привязаны к работнику. Обратитесь к администратору.');return;}
+  document.getElementById('arAmount').value='';
+  document.getElementById('arNote').value='';
+  document.getElementById('arError').textContent='';
+  openMo('moAdvanceReq');
+}
+
+async function submitAdvanceRequest(){
+  const myW=cfg.workers.find(w=>w.id===currentUser?.workerId);
+  if(!myW){document.getElementById('arError').textContent='Вы не привязаны к работнику';return;}
+  const amount=+document.getElementById('arAmount').value||0;
+  const note=document.getElementById('arNote').value.trim();
+  if(!amount){document.getElementById('arError').textContent='Введите сумму';return;}
+  if(!note){document.getElementById('arError').textContent='Комментарий обязателен';return;}
+  document.getElementById('arError').textContent='';
+  closeMo('moAdvanceReq');
+  const now=new Date().toISOString();
+  fbSavePayment({
+    workerId:myW.id,date:todayISO(),amount,note,status:'pending',
+    createdBy:currentUser.uid,createdByName:currentUser.name||currentUser.email,createdAt:now,history:[]
+  });
+}
+
+function renderPendingAdvances(){
+  const el=document.getElementById('pendingAdvancesPanel');
+  if(!el)return;
+  const list=[];
+  for(const[wId,pays] of Object.entries(pd.payments)){
+    for(const p of pays){
+      if(p.status==='pending'||p.status==='approved')list.push({...p,workerId:wId});
+    }
+  }
+  list.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  if(!list.length){el.style.display='none';return;}
+  el.style.display='';
+  let h=`<div class="set-group" style="border-color:rgba(245,166,35,.4);background:rgba(245,166,35,.04)">
+    <h3 style="color:var(--yellow);margin-bottom:12px">💰 Заявки на аванс (${list.length})</h3>
+    <div class="tbl-wrap"><table><thead><tr><th>Работник</th><th>Дата</th><th>Сумма</th><th>Комментарий</th><th>Статус</th><th style="text-align:right">Действие</th></tr></thead><tbody>`;
+  for(const p of list){
+    const w=cfg.workers.find(x=>x.id===p.workerId);
+    const stBadge=p.status==='approved'?'<span class="pay-badge pay-approved">👍 Одобрен</span>':'<span class="pay-badge pay-pending">⏳ Ожидает</span>';
+    h+=`<tr>
+      <td style="font-weight:600">${w?w.name:'—'}</td>
+      <td>${fmtDate(p.date)}</td>
+      <td style="font-weight:700;color:var(--accent)">${fmt(p.amount)} ₸</td>
+      <td style="color:var(--muted);font-size:12px">${p.note||'—'}</td>
+      <td>${stBadge}</td>
+      <td style="text-align:right;white-space:nowrap">`;
+    if(p.status==='pending'){
+      h+=`<button class="btn btn-sm" style="background:rgba(34,211,160,.12);color:var(--green);border:1px solid rgba(34,211,160,.3);margin-right:4px" onclick="reviewAdvance('${p._docId}','paid')">✓ Одобрить и выдать</button>
+        <button class="btn btn-sm" style="background:rgba(56,189,248,.12);color:var(--blue);border:1px solid rgba(56,189,248,.3);margin-right:4px" onclick="reviewAdvance('${p._docId}','approved')">🕐 Выдать позже</button>
+        <button class="btn btn-sm" style="background:rgba(240,92,110,.1);color:var(--red);border:1px solid rgba(240,92,110,.25)" onclick="reviewAdvance('${p._docId}','rejected')">✕ Отклонить</button>`;
+    }else{
+      h+=`<button class="btn btn-sm" style="background:rgba(34,211,160,.12);color:var(--green);border:1px solid rgba(34,211,160,.3);margin-right:4px" onclick="reviewAdvance('${p._docId}','paid')">✓ Выдать</button>
+        <button class="btn btn-sm" style="background:rgba(240,92,110,.1);color:var(--red);border:1px solid rgba(240,92,110,.25)" onclick="reviewAdvance('${p._docId}','rejected')">✕ Отклонить</button>`;
+    }
+    h+='</td></tr>';
+  }
+  h+='</tbody></table></div></div>';
+  el.innerHTML=h;
+}
+
+async function reviewAdvance(docId,newStatus){
+  if(!can('manage_payments'))return;
+  const existing=findPaymentByDocId(docId);
+  if(!existing)return;
+  const labels={paid:'выдать аванс',approved:'одобрить (выдать позже)',rejected:'отклонить заявку'};
+  let note=prompt(`Комментарий (${labels[newStatus]||newStatus}):`,existing.note||'');
+  if(note===null)return; // cancelled
+  note=note.trim();
+  if(newStatus==='paid'&&!note){alert('При выдаче аванса комментарий обязателен');return;}
+  const now=new Date().toISOString();
+  const who=currentUser.name||currentUser.email;
+  const changes=[];
+  if((existing.status||'pending')!==newStatus)changes.push({field:'status',old:existing.status||'pending',new:newStatus});
+  if((existing.note||'')!==note)changes.push({field:'note',old:existing.note||'',new:note});
+  const updateData={status:newStatus,note,updatedAt:now,updatedBy:who};
+  if(newStatus==='approved')updateData.approvedBy=who;
+  if(newStatus==='paid')updateData.paidBy=who;
+  if(changes.length){
+    const entry={at:now,by:who,byUid:currentUser.uid,changes};
+    updateData.history=[...(existing.history||[]),entry];
+  }
+  try{await db.collection('payments').doc(docId).update(updateData);}
+  catch(e){alert('Ошибка: '+e.message);}
 }
 
 // ═══════════════════════════════════════════════
@@ -1817,8 +1993,16 @@ function _workerDash(){
   const pays=pd.payments[myW.id]||[];
   const paidAmt=pays.filter(p=>!p.status||p.status==='paid').reduce((s,p)=>s+p.amount,0);
   const pendAmt=pays.filter(p=>p.status==='pending').reduce((s,p)=>s+p.amount,0);
+  const apprAmt=pays.filter(p=>p.status==='approved').reduce((s,p)=>s+p.amount,0);
   const balColor=earn.balance>0?'var(--red)':earn.balance<0?'var(--green)':'var(--muted)';
   let h='';
+  h+=`<div class="dash-section-title">Быстрые действия</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
+    <button class="btn btn-secondary" onclick="openWorkerShiftModal()">📅 Добавить смену</button>
+    <button class="btn btn-secondary" onclick="_quickShift(2)">🌙 Ночная смена</button>
+    <button class="btn btn-secondary" onclick="_quickShift(4)">⚡ Переработка</button>
+    <button class="btn btn-primary" onclick="openAdvanceRequestModal()">💰 Запросить аванс</button>
+  </div>`;
   if(myEquip){
     h+=`<div class="c-card" style="margin-bottom:14px"><div class="c-card-body" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">
       <div><div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Техника</div><div style="font-weight:700;color:var(--accent);font-size:15px">${myEquip.name}</div></div>
@@ -1840,10 +2024,17 @@ function _workerDash(){
   </div>`;
   if(pays.length){
     h+=`<div class="dash-section-title">Авансы</div>`;
-    h+=`<div class="kpi-row" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
-      <div class="kpi yw"><div class="kl">Ожидает выдачи</div><div class="kv yw" style="font-size:16px">${fmt(pendAmt)}</div><div class="ks">₸</div></div>
-      <div class="kpi gn"><div class="kl">Выдано авансов</div><div class="kv gn" style="font-size:16px">${fmt(paidAmt)}</div><div class="ks">₸</div></div>
+    h+=`<div class="kpi-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+      <div class="kpi yw"><div class="kl">Запрошено</div><div class="kv yw" style="font-size:16px">${fmt(pendAmt)}</div><div class="ks">₸ ожидает</div></div>
+      <div class="kpi bl"><div class="kl">Одобрено</div><div class="kv bl" style="font-size:16px">${fmt(apprAmt)}</div><div class="ks">₸ в очереди</div></div>
+      <div class="kpi gn"><div class="kl">Выдано</div><div class="kv gn" style="font-size:16px">${fmt(paidAmt)}</div><div class="ks">₸</div></div>
     </div>`;
+    h+='<div class="tbl-wrap" style="margin-bottom:16px"><table><thead><tr><th>Дата</th><th>Сумма</th><th>Комментарий</th><th>Статус</th></tr></thead><tbody>';
+    const PAY_BADGE_D={pending:'<span class="pay-badge pay-pending">⏳ Ожидает</span>',approved:'<span class="pay-badge pay-approved">👍 Одобрен</span>',rejected:'<span class="pay-badge pay-rejected">✕ Отклонён</span>',paid:'<span class="pay-badge pay-paid">✓ Выдан</span>'};
+    for(const p of [...pays].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5)){
+      h+=`<tr><td style="font-weight:600">${fmtDate(p.date)}</td><td style="font-weight:700;color:var(--accent)">${fmt(p.amount)} ₸</td><td style="color:var(--muted);font-size:12px">${p.note||'—'}</td><td>${PAY_BADGE_D[p.status||'paid']||PAY_BADGE_D.paid}</td></tr>`;
+    }
+    h+='</tbody></table></div>';
   }
   if(pendingShifts||approvedShifts||rejectedShifts){
     h+=`<div class="dash-section-title">Заявки на смены</div>`;
@@ -1876,7 +2067,8 @@ function _workerDash(){
       else if(s.status==='pending')st='<span style="color:var(--yellow);font-weight:600">⏳ Ожидает</span>';
       else if(s.status==='approved')st='<span style="color:var(--green);font-weight:600">✓ Принято</span>';
       else st='<span style="color:var(--red);font-weight:600">✕ Отклонено</span>';
-      h+=`<tr><td style="font-weight:600">${+dp[2]} ${MSHO[+dp[1]]} <span style="color:var(--muted);font-size:11px">${dow}</span></td><td>${tShb} ${TLAB[s.type]||''}</td><td>${st}</td><td style="color:var(--muted);font-size:12px">${s.note||'—'}</td></tr>`;
+      const rn=s.reviewNote?`<div style="color:var(--muted);font-size:10px;margin-top:2px">💬 ${s.reviewNote}</div>`:'';
+      h+=`<tr><td style="font-weight:600">${+dp[2]} ${MSHO[+dp[1]]} <span style="color:var(--muted);font-size:11px">${dow}</span></td><td>${tShb} ${TLAB[s.type]||''}</td><td>${st}${rn}</td><td style="color:var(--muted);font-size:12px">${s.note||'—'}</td></tr>`;
     }
     h+='</tbody></table></div>';
   }
@@ -1932,23 +2124,28 @@ function _adminDash(){
 }
 
 function _dispatcherDash(){
+  const myEquip=visibleEquipment();
+  const myEquipIds=new Set(myEquip.map(e=>e.id));
   let totalNights=0,pendingRequests=0;
-  for(const dates of Object.values(pd.shifts))
+  for(const[eqId,dates] of Object.entries(pd.shifts)){
+    if(!myEquipIds.has(eqId))continue;
     for(const[,cell] of Object.entries(dates)){
       if(cell.status==='pending')pendingRequests++;
       if(!cell.status||cell.status==='approved')if(cell.type===2||cell.type===3)totalNights++;
     }
+  }
   let h='';
   h+=`<div class="kpi-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
     <div class="kpi bl"><div class="kl">Ночей в периоде</div><div class="kv bl">${totalNights}</div><div class="ks">подтверждено</div></div>
     <div class="kpi ${pendingRequests>0?'yw':'gn'}"><div class="kl">Заявок</div><div class="kv ${pendingRequests>0?'yw':'gn'}">${pendingRequests}</div><div class="ks">ожидают</div></div>
-    <div class="kpi gn"><div class="kl">Техника</div><div class="kv gn">${cfg.equipment.length}</div><div class="ks">единиц</div></div>
+    <div class="kpi gn"><div class="kl">Техника</div><div class="kv gn">${myEquip.length}</div><div class="ks">закреплено</div></div>
   </div>`;
   if(pendingRequests>0){
     h+=`<div class="dash-section-title" style="color:var(--yellow)">⏳ Заявки на смены</div>`;
     h+='<div class="tbl-wrap" style="margin-bottom:14px"><table><thead><tr><th>Работник</th><th>Техника</th><th>Дата</th><th>Тип</th><th>Комментарий</th></tr></thead><tbody>';
     const TLAB={2:'Ночная',3:'День+Ночь',4:'Переработка'};
     for(const[eqId,dates] of Object.entries(pd.shifts)){
+      if(!myEquipIds.has(eqId))continue;
       for(const[date,cell] of Object.entries(dates)){
         if(cell.status!=='pending')continue;
         const equip=cfg.equipment.find(e=>e.id===eqId);
@@ -1959,16 +2156,16 @@ function _dispatcherDash(){
     }
     h+='</tbody></table></div>';
   }
-  h+=`<div class="dash-section-title">Техника по объектам</div>`;
+  h+=`<div class="dash-section-title">Моя техника по объектам</div>`;
   h+='<div class="tbl-wrap"><table><thead><tr><th>Техника</th><th>Оператор</th><th>Объект</th><th style="text-align:center">Ночей</th></tr></thead><tbody>';
-  for(const e of cfg.equipment){
+  for(const e of myEquip){
     const op=cfg.workers.find(w=>w.id===e.primaryWorkerId);
     const obj=cfg.objects.find(o=>o.id===e.objectId);
     const cs=pd.shifts[e.id]||{};
     let nights=0;for(const cell of Object.values(cs))if(!cell.status||cell.status==='approved')if(cell.type===2||cell.type===3)nights++;
     h+=`<tr><td style="font-weight:600;color:var(--accent)">${e.name}</td><td>${op?op.name:'—'}</td><td>${obj?obj.name:'—'}</td><td style="text-align:center;color:var(--blue);font-weight:700">${nights}</td></tr>`;
   }
-  if(!cfg.equipment.length)h+='<tr><td colspan="4" class="empty">Техника не добавлена</td></tr>';
+  if(!myEquip.length)h+='<tr><td colspan="4" class="empty">Нет закреплённой техники</td></tr>';
   h+='</tbody></table></div>';
   return h;
 }
@@ -2056,7 +2253,7 @@ function renderMyShifts(){
       <td style="font-weight:600">${fmtDate(s.date)}</td>
       <td style="color:var(--muted)">${dow}</td>
       <td>${typeShb} ${TLAB[t]||''}</td>
-      <td>${statusHtml}</td>
+      <td>${statusHtml}${s.reviewNote?`<div style="color:var(--muted);font-size:10px;margin-top:2px">💬 ${s.reviewNote}</div>`:''}</td>
       <td style="color:var(--muted);font-size:12px">${s.note||'—'}</td>
       <td style="white-space:nowrap">${canEdit?`<button class="edit-btn" onclick="openWorkerShiftModal('${s.date}')">✏</button> <button class="del-btn" onclick="deleteWorkerShift('${s.date}')">✕</button>`:''}</td>
     </tr>`;
@@ -2066,7 +2263,11 @@ function renderMyShifts(){
   listEl.innerHTML=h;
 }
 
-function openWorkerShiftModal(editDateKey){
+function _quickShift(presetType){
+  openWorkerShiftModal(null,presetType);
+}
+
+function openWorkerShiftModal(editDateKey,presetType){
   const myW=cfg.workers.find(w=>w.id===currentUser?.workerId);
   const myEquip=myW?cfg.equipment.find(e=>e.id===myW.equipmentId):null;
   if(!myEquip){alert('Техника не назначена. Обратитесь к администратору.');return;}
@@ -2097,7 +2298,7 @@ function openWorkerShiftModal(editDateKey){
   }else{
     document.getElementById('wsTitle').textContent='Добавить смену';
     document.getElementById('wsEditKey').value='';
-    document.getElementById('wsType').value='2';
+    document.getElementById('wsType').value=String(presetType||2);
     document.getElementById('wsNote').value='';
     const td=todayISO();
     if(dsel.querySelector(`option[value="${td}"]`))dsel.value=td;
@@ -2149,6 +2350,7 @@ function renderPendingShifts(){
   if(!el)return;
   const list=[];
   for(const[eqId,dates] of Object.entries(pd.shifts)){
+    if(!canSeeEquip(eqId))continue;
     for(const[date,cell] of Object.entries(dates)){
       if(cell.status==='pending'){
         const equip=cfg.equipment.find(e=>e.id===eqId);
@@ -2183,17 +2385,31 @@ function renderPendingShifts(){
 }
 
 async function approveShift(docId,newStatus){
-  if(!can('edit_shifts'))return;
-  try{await db.collection('shifts').doc(docId).update({status:newStatus});}
-  catch(e){alert('Ошибка: '+e.message);}
+  const eqId=docId.substring(0,docId.indexOf('_'));
+  if(!canApproveShiftFor(eqId)){alert('Нет прав на подтверждение смен по этой технике');return;}
+  const label=newStatus==='approved'?'Подтвердить смену?':'Отклонить смену?';
+  if(!confirm(label))return;
+  const reviewNote=prompt('Комментарий (необязательно):','')||'';
+  try{
+    await db.collection('shifts').doc(docId).update({
+      status:newStatus,
+      reviewNote,
+      reviewedBy:currentUser.name||currentUser.email,
+      reviewedByUid:currentUser.uid,
+      reviewedAt:new Date().toISOString()
+    });
+  }catch(e){alert('Ошибка: '+e.message);}
 }
 
 // ═══════════════════════════════════════════════
 // EQUIPMENT TAB
 // ═══════════════════════════════════════════════
 function renderEquip(){
+  const addBtn=document.querySelector('#pane-equip .ph .btn-primary');
+  const canManage=can('manage_equip');
+  if(addBtn)addBtn.style.display=canManage?'':'none';
   let h='';
-  for(const e of cfg.equipment){
+  for(const e of visibleEquipment()){
     const op=cfg.workers.find(w=>w.id===e.primaryWorkerId);
     const obj=cfg.objects.find(o=>o.id===e.objectId);
     const pt=cfg.partners.find(p=>p.id===e.rentalPartnerId);
@@ -2213,12 +2429,12 @@ function renderEquip(){
         </div>
       </div>
       <div class="c-card-foot">
-        <button class="btn btn-secondary btn-sm" onclick="openEquipModal('${e.id}')">✏ Изменить</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteEquip('${e.id}')">✕ Удалить</button>
+        ${canManage?`<button class="btn btn-secondary btn-sm" onclick="openEquipModal('${e.id}')">✏ Изменить</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteEquip('${e.id}')">✕ Удалить</button>`:'<span style="color:var(--muted);font-size:11px;font-style:italic">только просмотр</span>'}
       </div>
     </div>`;
   }
-  document.getElementById('equipCards').innerHTML=h||'<div class="empty">Техники нет. Добавьте первую.</div>';
+  document.getElementById('equipCards').innerHTML=h||'<div class="empty">Нет доступной техники.</div>';
 }
 
 function openEquipModal(id){
@@ -2712,29 +2928,41 @@ function renderSettings(){
   document.getElementById('sPeriodEnd').value=s.periodEndDay||20;
   document.getElementById('sVat').value=s.vatRate||16;
   document.getElementById('sCompany').value=s.companyName||'ТОО';
+  const editable=can('edit_config');
+  ['sPeriodStart','sPeriodEnd','sVat','sCompany'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.disabled=!editable;
+  });
+  const note=document.getElementById('settingsViewOnlyNote');
+  if(note)note.style.display=editable?'none':'';
   renderMobileInstall();
+  const us=document.getElementById('usersSection');
+  if(us)us.style.display=can('manage_users')?'':'none';
   if(can('manage_users')) renderUsersList();
 }
 
 // ═══════════════════════════════════════════════
 // USER MANAGEMENT
 // ═══════════════════════════════════════════════
+let _usersCache={};
 async function renderUsersList(){
   const el=document.getElementById('usersList');if(!el)return;
   try{
     const snap=await db.collection('users').get();
-    const roleColors={admin:'t-crane_op',dispatcher:'t-shift',accountant:'t-ip',worker:'t-partner',pending:'t-office'};
+    const roleColors={admin:'t-crane_op',owner:'t-crane_op',dispatcher:'t-shift',accountant:'t-ip',worker:'t-partner',partner:'t-partner',pending:'t-office'};
+    _usersCache={};
     let h='<table style="width:100%;border-collapse:collapse;font-size:13px">';
     h+='<tr style="color:var(--muted);font-size:11px"><th style="text-align:left;padding:4px 0">Имя</th><th style="text-align:left">Email</th><th>Роль</th><th></th></tr>';
     snap.docs.forEach(d=>{
       const u=d.data(),uid=d.id;
+      _usersCache[uid]=u;
       const isSelf=uid===currentUser?.uid;
       const rc=roleColors[u.role]||'t-office';
+      const eqNote=u.role==='dispatcher'&&(u.assignedEquipmentIds||[]).length?` <span style="color:var(--muted);font-size:10px">(${u.assignedEquipmentIds.length} техники)</span>`:'';
       h+=`<tr style="border-top:1px solid #1e2235">
         <td style="padding:6px 0;font-weight:${isSelf?700:400}">${u.name||'—'}${isSelf?' (вы)':''}</td>
         <td style="color:var(--muted);font-size:11px">${u.email||'—'}</td>
-        <td style="text-align:center"><span class="badge-type ${rc}">${ROLE_LABELS[u.role]||u.role}</span></td>
-        <td>${isSelf?'':`<button class="edit-btn" onclick="openEditRoleModal('${uid}','${u.role||'pending'}','${u.workerId||''}','${(u.name||'').replace(/'/g,'')}')" title="Изменить роль">✏</button>`}</td>
+        <td style="text-align:center"><span class="badge-type ${rc}">${ROLE_LABELS[u.role]||u.role}</span>${eqNote}</td>
+        <td>${isSelf?'':`<button class="edit-btn" onclick="openEditRoleModalByUid('${uid}')" title="Изменить роль">✏</button>`}</td>
       </tr>`;
     });
     h+='</table>';
@@ -2742,7 +2970,22 @@ async function renderUsersList(){
   }catch(e){ el.innerHTML=`<div style="color:var(--muted);font-size:13px">${e.message}</div>`; }
 }
 
+function openEditRoleModalByUid(uid){
+  const u=_usersCache[uid];if(!u)return;
+  openEditRoleModal(uid,u.role||'pending',u.workerId||'',u.name||'',u.partnerId||'',u.assignedEquipmentIds||[]);
+}
+
 let _muMode='create';
+
+function _fillMuLookups(workerId,partnerId,equipIds){
+  const ws=document.getElementById('muWorker');
+  ws.innerHTML='<option value="">— не выбрано —</option>'+cfg.workers.map(w=>`<option value="${w.id}"${w.id===workerId?' selected':''}>${w.name}</option>`).join('');
+  const ps=document.getElementById('muPartner');
+  ps.innerHTML='<option value="">— не выбрано —</option>'+cfg.partners.map(p=>`<option value="${p.id}"${p.id===partnerId?' selected':''}>${p.name}</option>`).join('');
+  const es=document.getElementById('muEquip');
+  const eqIds=equipIds||[];
+  es.innerHTML=cfg.equipment.map(e=>`<option value="${e.id}"${eqIds.includes(e.id)?' selected':''}>${e.name}</option>`).join('');
+}
 
 function openUserModal(){
   _muMode='create';
@@ -2757,13 +3000,12 @@ function openUserModal(){
   document.getElementById('muError').textContent='';
   document.getElementById('muSaveBtn').textContent='Создать';
   document.getElementById('muSaveBtn').disabled=false;
-  const ws=document.getElementById('muWorker');
-  ws.innerHTML='<option value="">— не выбрано —</option>'+cfg.workers.map(w=>`<option value="${w.id}">${w.name}</option>`).join('');
-  toggleWorkerField();
+  _fillMuLookups('','',[]);
+  toggleRoleFields();
   openMo('moUser');
 }
 
-function openEditRoleModal(uid,role,workerId,name){
+function openEditRoleModal(uid,role,workerId,name,partnerId,equipIds){
   _muMode='edit';
   document.getElementById('moUserTitle').textContent='Роль: '+(name||uid);
   document.getElementById('muUid').value=uid;
@@ -2774,27 +3016,35 @@ function openEditRoleModal(uid,role,workerId,name){
   document.getElementById('muError').textContent='';
   document.getElementById('muSaveBtn').textContent='Сохранить';
   document.getElementById('muSaveBtn').disabled=false;
-  const ws=document.getElementById('muWorker');
-  ws.innerHTML='<option value="">— не выбрано —</option>'+cfg.workers.map(w=>`<option value="${w.id}"${w.id===workerId?' selected':''}>${w.name}</option>`).join('');
-  toggleWorkerField();
+  _fillMuLookups(workerId,partnerId,equipIds||[]);
+  toggleRoleFields();
   openMo('moUser');
 }
 
-function toggleWorkerField(){
+function toggleRoleFields(){
   const r=document.getElementById('muRole').value;
   document.getElementById('muWorkerGroup').style.display=r==='worker'?'':'none';
+  document.getElementById('muPartnerGroup').style.display=r==='partner'?'':'none';
+  document.getElementById('muEquipGroup').style.display=r==='dispatcher'?'':'none';
 }
 
 async function saveUser(){
   const name=document.getElementById('muName').value.trim();
   const role=document.getElementById('muRole').value;
   const workerId=document.getElementById('muWorker').value;
+  const partnerId=document.getElementById('muPartner').value;
+  const assignedEquipmentIds=Array.from(document.getElementById('muEquip').selectedOptions).map(o=>o.value);
   document.getElementById('muError').textContent='';
 
   if(_muMode==='edit'){
     const uid=document.getElementById('muUid').value;
     try{
-      await db.collection('users').doc(uid).update({role,workerId:workerId||''});
+      await db.collection('users').doc(uid).update({
+        role,
+        workerId:workerId||'',
+        partnerId:partnerId||'',
+        assignedEquipmentIds:role==='dispatcher'?assignedEquipmentIds:[]
+      });
       closeMo('moUser'); renderUsersList();
     }catch(e){document.getElementById('muError').textContent='Ошибка: '+e.message;}
     return;
@@ -2810,7 +3060,12 @@ async function saveUser(){
     // Create via secondary app so admin stays logged in
     const sec=firebase.initializeApp(FIREBASE_CONFIG,'sec_'+Date.now());
     const cred=await sec.auth().createUserWithEmailAndPassword(email,pw);
-    await db.collection('users').doc(cred.user.uid).set({email,name,role,workerId:workerId||''});
+    await db.collection('users').doc(cred.user.uid).set({
+      email,name,role,
+      workerId:workerId||'',
+      partnerId:partnerId||'',
+      assignedEquipmentIds:role==='dispatcher'?assignedEquipmentIds:[]
+    });
     await sec.delete();
     closeMo('moUser'); renderUsersList();
   }catch(e){
