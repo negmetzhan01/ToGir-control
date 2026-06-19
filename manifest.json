@@ -1,7 +1,7 @@
 {
-  "name": "ТОО — Учёт смен и расходов",
-  "short_name": "ТОО Учёт",
-  "description": "Учёт смен, зарплат, техники, доходов и расходов для ТОО",
+  "name": "JUMIX Tech",
+  "short_name": "JUMIX Tech",
+  "description": "Единая платформа управления техникой, персоналом и объектами",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

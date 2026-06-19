@@ -1,8 +1,8 @@
 'use strict';
 
 // Increment this version to force cache refresh on all clients
-const CACHE_VERSION = 'v4';
-const CACHE_NAME = `too-uchet-${CACHE_VERSION}`;
+const CACHE_VERSION = 'v7';
+const CACHE_NAME = `jumix-tech-${CACHE_VERSION}`;
 
 // Core assets — always cache these on install
 const CORE_ASSETS = [
@@ -48,7 +48,7 @@ self.addEventListener('activate', event => {
     const cacheNames = await caches.keys();
     await Promise.all(
       cacheNames
-        .filter(name => name.startsWith('too-uchet-') && name !== CACHE_NAME)
+        .filter(name => (name.startsWith('jumix-tech-') || name.startsWith('too-uchet-')) && name !== CACHE_NAME)
         .map(name => caches.delete(name))
     );
     // Take control of all open tabs immediately
