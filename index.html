@@ -774,6 +774,13 @@ body{padding-left:var(--sidebar-w)}
       <div class="fg"><label class="fl">Ставка/ночь ₸</label><input class="fi" type="number" id="wSalNight" placeholder="0"></div>
       <div class="fg"><label class="fl">Ставка/день ₸</label><input class="fi" type="number" id="wSalDay" placeholder="0"></div>
     </div>
+    <div class="fg"><label class="fl">Норма дней в месяце</label>
+      <input class="fi" type="number" id="wNormDays" placeholder="0 — полный оклад">
+      <div style="color:var(--muted);font-size:11px;margin-top:3px">0 = оклад начисляется полностью. Если задано, оклад = (оклад ÷ норма) × отработанные дневные смены.</div></div>
+    <div class="fg"><label class="fl">История окладов</label>
+      <div id="wSalHistList"></div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="addSalHistRow()">+ Добавить период оклада</button>
+      <div style="color:var(--muted);font-size:11px;margin-top:4px">Каждый оклад действует с указанной даты. Поле «ЗП/месяц» применяется к периодам до первой даты в истории.</div></div>
     <div class="fg"><label class="fl">Привязать к технике</label>
       <select class="fi" id="wEquipId"><option value="">— Не привязан —</option></select></div>
     <div class="mo-acts">
@@ -1479,6 +1486,7 @@ function fmt(n){return Math.round(n||0).toLocaleString('ru-RU');}
 function fmtM(n){const s=n<0?'−':'',a=Math.abs(n||0);return a>=1e6?s+(a/1e6).toFixed(1)+' млн ₸':s+fmt(a)+' ₸';}
 function todayISO(){return new Date().toISOString().split('T')[0];}
 function fmtDate(iso){if(!iso)return'—';const[,m,d]=iso.split('-');return`${+d} ${MSHO[+m]}`;}
+function fmtFullDate(iso){if(!iso)return'—';const[y,m,d]=iso.split('-');return`${+d} ${MSHO[+m]} ${y}`;}
 
 function eqName(id){const e=cfg.equipment.find(x=>x.id===id);return e?e.name:id||'—';}
 function wName(id){const w=cfg.workers.find(x=>x.id===id);return w?w.name:id||'—';}
@@ -1738,8 +1746,26 @@ function saveShift(){
 // ═══════════════════════════════════════════════
 // WORKERS TAB
 // ═══════════════════════════════════════════════
+// Возвращает оклад работника, действовавший в указанном периоде (история окладов).
+// salaryHistory: [{from:'YYYY-MM-DD', monthly:N}] — каждый оклад действует с даты from.
+// Если для периода нет подходящей записи истории — используется базовый w.salary.monthly
+// (обратная совместимость: у старых работников истории нет).
+function effectiveMonthly(w,year,em){
+  const base=w.salary?.monthly||0;
+  const hist=Array.isArray(w.salaryHistory)?w.salaryHistory.filter(e=>e&&e.from):[];
+  if(!hist.length)return base;
+  // Дата закрытия периода (20-е число месяца em) — по ней определяем действующий оклад.
+  const ed=cfg.settings.periodEndDay||20;
+  const endISO=`${year}-${pad(em)}-${pad(ed)}`;
+  let chosen=null;
+  for(const e of hist){
+    if((e.from||'')<=endISO&&(!chosen||e.from>chosen.from))chosen=e;
+  }
+  return chosen?(+chosen.monthly||0):base;
+}
+
 function calcWorkerEarnings(w){
-  let nightCount=0,overCount=0,subNightCount=0,subDayCount=0;
+  let nightCount=0,overCount=0,subNightCount=0,subDayCount=0,dayCount=0;
   for(const equip of cfg.equipment){
     const cs=pd.shifts[equip.id]||{};
     const isMain=equip.primaryWorkerId===w.id;
@@ -1749,15 +1775,27 @@ function calcWorkerEarnings(w){
       const noAssign=!cell.workerId;
       const directAssign=cell.workerId===w.id;
       const isSub=directAssign&&!isMain;
-      if(isMain&&noAssign){if(t===2||t===3)nightCount++;if(t===4)overCount++;}
+      if(isMain&&noAssign){if(t===1||t===3)dayCount++;if(t===2||t===3)nightCount++;if(t===4)overCount++;}
       else if(directAssign){
         if(isSub){if(t===2||t===3)subNightCount++;if(t===1||t===3)subDayCount++;if(t===4)overCount++;}
-        else{if(t===2||t===3)nightCount++;if(t===4)overCount++;}
+        else{if(t===1||t===3)dayCount++;if(t===2||t===3)nightCount++;if(t===4)overCount++;}
       }
     }
   }
   const nRate=w.salary?.nightly||0,dRate=w.salary?.daily||0;
-  const base=w.salary?.monthly||0;
+  // Оклад с учётом истории окладов (действующий в текущем периоде)
+  const monthly=effectiveMonthly(w,curYear,curEM);
+  // Расчёт оклада по фактически отработанным дневным сменам (если задана норма дней).
+  // norm=0/не задано → полный оклад (как было раньше, обратная совместимость).
+  const norm=+w.normDays||0;
+  const normApplied=norm>0;
+  const dayRate=normApplied?monthly/norm:0;
+  let base;
+  if(normApplied){
+    base=dayCount>=norm?monthly:Math.round(dayRate*dayCount);
+  }else{
+    base=monthly;
+  }
   const nightBonus=nightCount*nRate;
   const overBonus=overCount*(dRate||nRate);
   const subBonus=subNightCount*nRate+subDayCount*dRate;
@@ -1765,7 +1803,7 @@ function calcWorkerEarnings(w){
   const pays=(pd.payments[w.id]||[]).reduce((s,p)=>s+((!p.status||p.status==='paid')?p.amount:0),0);
   const pendingAdvances=(pd.payments[w.id]||[]).filter(p=>p.status==='pending'||p.status==='approved').reduce((s,p)=>s+p.amount,0);
   const balance=totalAccrued-pays;
-  return{base,nightCount,nightBonus,overCount,overBonus,subNightCount,subDayCount,subBonus,totalAccrued,pays,pendingAdvances,balance};
+  return{base,monthly,norm,normApplied,dayRate,dayCount,nightCount,nightBonus,overCount,overBonus,subNightCount,subDayCount,subBonus,totalAccrued,pays,pendingAdvances,balance};
 }
 
 function renderWorkers(){
@@ -1902,7 +1940,12 @@ function openWorkerDetail(wId){
   document.getElementById('wdPayBtn').onclick=()=>{closeMo('moWorkerDetail');openPayModal(wId);};
 
   let h='<div class="wdet-section"><h4>Начисления за период</h4>';
-  h+=`<div class="wdet-row"><span>Оклад / ЗП за месяц</span><span>${fmt(earn.base)} ₸</span></div>`;
+  if(earn.normApplied){
+    h+=`<div class="wdet-row"><span>Оклад (по факт. дням)</span><span>${fmt(earn.base)} ₸</span></div>`;
+    h+=`<div class="wdet-row" style="border:none;padding-top:0"><span style="font-size:11px;color:var(--muted)">Оклад ${fmt(earn.monthly)} ₸ ÷ ${earn.norm} дн = ${earn.dayRate.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})} ₸/день × ${earn.dayCount} дн${earn.dayCount>=earn.norm?' (норма выполнена → полный оклад)':''}</span><span></span></div>`;
+  }else{
+    h+=`<div class="wdet-row"><span>Оклад / ЗП за месяц</span><span>${fmt(earn.base)} ₸</span></div>`;
+  }
   if(earn.nightBonus){h+=`<div class="wdet-row"><span>Ночные смены (${earn.nightCount} × ${fmt(w.salary?.nightly||0)} ₸)</span><span style="color:var(--blue)">${fmt(earn.nightBonus)} ₸</span></div>`;}
   if(earn.overBonus){h+=`<div class="wdet-row"><span>Переработки (${earn.overCount} × ${fmt(w.salary?.daily||w.salary?.nightly||0)} ₸)</span><span style="color:var(--accent)">${fmt(earn.overBonus)} ₸</span></div>`;}
   if(earn.subBonus){
@@ -1911,12 +1954,26 @@ function openWorkerDetail(wId){
   h+=`<div class="wdet-row total"><span>Итого начислено</span><span style="color:var(--blue)">${fmt(earn.totalAccrued)} ₸</span></div>`;
   h+='</div>';
 
+  // История изменений оклада
+  const salHist=Array.isArray(w.salaryHistory)?[...w.salaryHistory].filter(e=>e&&e.from).sort((a,b)=>b.from.localeCompare(a.from)):[];
+  if(salHist.length||w.salary?.monthly){
+    h+='<div class="wdet-section"><h4>История окладов</h4>';
+    for(const e of salHist){
+      const cur=e.from<=`${curYear}-${pad(curEM)}-${pad(cfg.settings.periodEndDay||20)}`;
+      h+=`<div class="wdet-row"><span>с ${fmtFullDate(e.from)}</span><span style="${cur?'font-weight:600':'color:var(--muted)'}">${fmt(+e.monthly||0)} ₸</span></div>`;
+    }
+    h+=`<div class="wdet-row"><span style="color:var(--muted)">базовый (до истории)</span><span style="color:var(--muted)">${fmt(w.salary?.monthly||0)} ₸</span></div>`;
+    h+=`<div class="wdet-row total"><span>Действует в этом периоде</span><span style="color:var(--green)">${fmt(earn.monthly)} ₸</span></div>`;
+    h+='</div>';
+  }
+
   const canEditPay=can('manage_payments');
   const PAY_BADGE={
     pending:'<span class="pay-badge pay-pending">⏳ Ожидает</span>',
     approved:'<span class="pay-badge pay-approved">👍 Одобрен</span>',
     rejected:'<span class="pay-badge pay-rejected">✕ Отклонён</span>',
-    paid:'<span class="pay-badge pay-paid">✓ Выдан</span>'
+    paid:'<span class="pay-badge pay-paid">✓ Выдан</span>',
+    deleted:'<span class="pay-badge pay-rejected">🗑 Удалён</span>'
   };
   h+='<div class="wdet-section"><h4>История выплат</h4>';
   if(!pays.length){h+='<div style="color:var(--muted);font-size:13px;padding:8px 0">Выплат не было</div>';}
@@ -1925,13 +1982,15 @@ function openWorkerDetail(wId){
     h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
     h+=`<tr style="color:var(--muted)"><th style="text-align:left;padding:4px 0">Дата</th><th style="text-align:left">Назначение</th><th style="text-align:left">Статус</th><th style="text-align:right">Выплата</th><th style="text-align:right">Остаток</th>${canEditPay?'<th></th>':''}</tr>`;
     for(const p of pays){
+      const isDeleted=p.status==='deleted';
       const counted=(!p.status||p.status==='paid');
       if(counted)running-=p.amount;
       const rc=running>0?'rb-neg':'rb-pos';
       const stBadge=PAY_BADGE[p.status||'paid']||PAY_BADGE.paid;
       const whoNote=p.createdByName?`<div style="font-size:10px;color:var(--muted);margin-top:2px">от ${p.createdByName}</div>`:'';
-      const editBtn=canEditPay?`<td style="padding:3px 0"><button class="edit-btn" onclick="closeMo('moWorkerDetail');editPayment('${w.id}','${p._docId}')">✏</button></td>`:'';
-      h+=`<tr style="border-top:1px solid var(--border-2)"><td style="padding:5px 0">${fmtDate(p.date)}</td><td style="color:var(--muted)">${p.note||'—'}${whoNote}</td><td>${stBadge}</td><td style="text-align:right;color:var(--green)">−${fmt(p.amount)} ₸</td><td style="text-align:right" class="${rc}">${running>0?'+':''}${fmt(running)} ₸</td>${editBtn}</tr>`;
+      const actBtns=canEditPay&&!isDeleted?`<td style="padding:3px 0;white-space:nowrap"><button class="edit-btn" onclick="closeMo('moWorkerDetail');editPayment('${w.id}','${p._docId}')">✏</button><button class="del-btn" onclick="deletePayment('${w.id}','${p._docId}')">✕</button></td>`:(canEditPay?'<td></td>':'');
+      const rowStyle=isDeleted?'border-top:1px solid var(--border-2);opacity:.5;text-decoration:line-through':'border-top:1px solid var(--border-2)';
+      h+=`<tr style="${rowStyle}"><td style="padding:5px 0">${fmtDate(p.date)}</td><td style="color:var(--muted)">${p.note||'—'}${whoNote}</td><td>${stBadge}</td><td style="text-align:right;color:var(--green)">−${fmt(p.amount)} ₸</td><td style="text-align:right" class="${rc}">${running>0?'+':''}${fmt(running)} ₸</td>${actBtns}</tr>`;
     }
     h+='</table>';
   }
@@ -1942,7 +2001,7 @@ function openWorkerDetail(wId){
   allHist.sort((a,b)=>b.at.localeCompare(a.at));
   if(allHist.length){
     const FLAB={amount:'Сумма',date:'Дата',note:'Комментарий',status:'Статус'};
-    const SLAB={paid:'Выдан',pending:'Ожидает',approved:'Одобрен',rejected:'Отклонён'};
+    const SLAB={paid:'Выдан',pending:'Ожидает',approved:'Одобрен',rejected:'Отклонён',deleted:'Удалён'};
     h+='<div class="wdet-section"><h4>История изменений</h4><div class="pay-history">';
     for(const e of allHist.slice(0,15)){
       const dt=e.at.split('T');
@@ -1978,17 +2037,44 @@ function openWorkerModal(id){
   document.getElementById('wSalMonth').value=w?w.salary?.monthly||0:0;
   document.getElementById('wSalNight').value=w?w.salary?.nightly||0:0;
   document.getElementById('wSalDay').value=w?w.salary?.daily||0:0;
+  document.getElementById('wNormDays').value=w?w.normDays||0:0;
+  // История окладов
+  document.getElementById('wSalHistList').innerHTML='';
+  const hist=(w&&Array.isArray(w.salaryHistory))?[...w.salaryHistory].sort((a,b)=>(a.from||'').localeCompare(b.from||'')):[];
+  for(const e of hist)addSalHistRow(e.from,e.monthly);
   const sel=document.getElementById('wEquipId');
   sel.innerHTML='<option value="">— Не привязан —</option>'+cfg.equipment.map(e=>`<option value="${e.id}"${w?.equipmentId===e.id?' selected':''}>${e.name}</option>`).join('');
   openMo('moWorker');
 }
 
+// Добавляет строку периода оклада в редактор истории окладов
+function addSalHistRow(from,monthly){
+  const list=document.getElementById('wSalHistList');
+  const row=document.createElement('div');
+  row.className='salhist-row';
+  row.style.cssText='display:flex;gap:6px;align-items:center;margin-bottom:6px';
+  row.innerHTML=`<input type="date" class="fi salhist-from" style="flex:1" value="${from||''}">
+    <input type="number" class="fi salhist-amount" style="flex:1" placeholder="Оклад ₸" value="${monthly!=null?monthly:''}">
+    <button type="button" class="del-btn" onclick="this.parentNode.remove()">✕</button>`;
+  list.appendChild(row);
+}
+
 function saveWorker(){
   const id=document.getElementById('wId').value;
+  // Собираем историю окладов из редактора (только заполненные строки), сортируем по дате
+  const salaryHistory=[];
+  document.querySelectorAll('#wSalHistList .salhist-row').forEach(r=>{
+    const from=r.querySelector('.salhist-from').value;
+    const monthly=+r.querySelector('.salhist-amount').value||0;
+    if(from&&monthly)salaryHistory.push({from,monthly});
+  });
+  salaryHistory.sort((a,b)=>a.from.localeCompare(b.from));
   const obj={
     id:id||uuid(),name:document.getElementById('wName').value.trim(),
     type:document.getElementById('wType').value,
     salary:{monthly:+document.getElementById('wSalMonth').value||0,nightly:+document.getElementById('wSalNight').value||0,daily:+document.getElementById('wSalDay').value||0},
+    normDays:+document.getElementById('wNormDays').value||0,
+    salaryHistory,
     equipmentId:document.getElementById('wEquipId').value
   };
   if(!obj.name){alert('Введите имя');return;}
@@ -2061,6 +2147,23 @@ async function savePayment(){
   }
 }
 
+// Удаление аванса/выплаты (мягкое удаление: status='deleted').
+// Документ сохраняется для аудита, запись об удалении пишется в history.
+// Остаток работника пересчитывается автоматически (deleted не учитывается в calcWorkerEarnings).
+async function deletePayment(wId,docId){
+  if(!can('manage_payments')){alert('Нет прав для удаления');return;}
+  const existing=findPaymentByDocId(docId);
+  if(!existing)return;
+  if(existing.status==='deleted'){alert('Этот аванс уже удалён');return;}
+  if(!confirm('Удалить этот аванс/выплату? Остаток работника будет пересчитан.'))return;
+  const now=new Date().toISOString();
+  const who=currentUser.name||currentUser.email;
+  const entry={at:now,by:who,byUid:currentUser.uid,changes:[{field:'status',old:existing.status||'paid',new:'deleted'}]};
+  const updateData={status:'deleted',deletedAt:now,deletedBy:who,updatedAt:now,updatedBy:who,history:[...(existing.history||[]),entry]};
+  try{await db.collection('payments').doc(docId).update(updateData);}
+  catch(e){alert('Ошибка: '+e.message);}
+}
+
 function findPaymentByDocId(docId){
   for(const pays of Object.values(pd.payments)){
     const f=pays.find(p=>p._docId===docId);
@@ -2130,6 +2233,7 @@ function renderPendingAdvances(){
       h+=`<button class="btn btn-sm" style="background:rgba(34,211,160,.12);color:var(--green);border:1px solid rgba(34,211,160,.3);margin-right:4px" onclick="reviewAdvance('${p._docId}','paid')">✓ Выдать</button>
         <button class="btn btn-sm" style="background:rgba(240,92,110,.1);color:var(--red);border:1px solid rgba(240,92,110,.25)" onclick="reviewAdvance('${p._docId}','rejected')">✕ Отклонить</button>`;
     }
+    h+=`<button class="btn btn-sm" style="background:transparent;color:var(--muted);border:1px solid var(--border);margin-left:4px" onclick="deletePayment('${p.workerId}','${p._docId}')" title="Удалить заявку">🗑</button>`;
     h+='</td></tr>';
   }
   h+='</tbody></table></div></div>';
@@ -2914,13 +3018,112 @@ function renderObjects(){
         <div style="color:var(--muted);margin-bottom:4px">Техника на объекте:</div>
         ${eqs.length?eqs.map(e=>`<span class="badge-type t-crane_op" style="margin-right:4px">${e.name}</span>`).join(''):'<span style="color:var(--muted)">нет</span>'}
       </div>
-      <div class="c-card-foot">
+      <div class="c-card-foot" style="flex-wrap:wrap;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="exportTimesheetPDF('${o.id}')">📄 Табель PDF</button>
+        <button class="btn btn-secondary btn-sm" onclick="exportTimesheetExcel('${o.id}')">📊 Excel</button>
         <button class="btn btn-secondary btn-sm" onclick="openObjModal('${o.id}')">✏ Изменить</button>
         <button class="btn btn-danger btn-sm" onclick="deleteObj('${o.id}')">✕</button>
       </div>
     </div>`;
   }
   document.getElementById('objCards').innerHTML=h||'<div class="empty">Объектов нет</div>';
+}
+
+// ═══════════════════════════════════════════════
+// ТАБЕЛЬ ПО ОБЪЕКТУ (PDF / Excel)
+// ═══════════════════════════════════════════════
+// Собирает данные табеля по объекту за текущий период
+function buildTimesheetData(objId){
+  const o=cfg.objects.find(x=>x.id===objId);
+  if(!o)return null;
+  const lbl=periodLabel(curYear,curEM);
+  const rows=[];
+  for(const e of cfg.equipment.filter(eq=>eq.objectId===objId)){
+    let days=0,nights=0,over=0;
+    for(const cell of Object.values(pd.shifts[e.id]||{})){
+      const t=cell.type||0;
+      if(cell.status==='pending'||cell.status==='rejected')continue;
+      if(t===1||t===3)days++;
+      if(t===2||t===3)nights++;
+      if(t===4)over++;
+    }
+    const op=cfg.workers.find(w=>w.id===e.primaryWorkerId);
+    rows.push({equip:e.name,serial:e.serial||'—',worker:op?op.name:'—',days,nights,over});
+  }
+  return{obj:o,periodMain:lbl.main,rows,company:cfg.settings.companyName||'ТОО'};
+}
+
+// Экранирование для вставки в HTML табеля
+function _tsEsc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// Формирует HTML-документ табеля (используется и для печати в PDF, и для выгрузки в Excel)
+function timesheetHTML(d){
+  let body=`<tr>
+    <th>№</th><th>Техника</th><th>Госномер / инв. номер</th><th>Работник</th>
+    <th>Дневные смены</th><th>Ночные смены</th><th>Переработки</th></tr>`;
+  let i=1,td=0,tn=0,to=0;
+  for(const r of d.rows){
+    td+=r.days;tn+=r.nights;to+=r.over;
+    body+=`<tr>
+      <td style="text-align:center">${i++}</td>
+      <td>${_tsEsc(r.equip)}</td>
+      <td>${_tsEsc(r.serial)}</td>
+      <td>${_tsEsc(r.worker)}</td>
+      <td style="text-align:center">${r.days}</td>
+      <td style="text-align:center">${r.nights}</td>
+      <td style="text-align:center">${r.over}</td></tr>`;
+  }
+  body+=`<tr style="font-weight:bold;background:#f0f0f0">
+    <td></td><td colspan="3">ИТОГО</td>
+    <td style="text-align:center">${td}</td>
+    <td style="text-align:center">${tn}</td>
+    <td style="text-align:center">${to}</td></tr>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+  <title>Табель — ${_tsEsc(d.obj.name)}</title>
+  <style>
+    body{font-family:Arial,sans-serif;color:#000;padding:24px;font-size:13px}
+    h1{font-size:18px;margin:0 0 4px}
+    .meta{margin:2px 0;font-size:13px}
+    table{border-collapse:collapse;width:100%;margin-top:16px}
+    th,td{border:1px solid #000;padding:6px 8px}
+    th{background:#e8e8e8;font-size:12px}
+    .sign{margin-top:48px;display:flex;justify-content:space-between;gap:40px}
+    .sign div{flex:1}
+    .sign .line{border-top:1px solid #000;margin-top:40px;padding-top:4px;font-size:12px;color:#333}
+    @media print{body{padding:0}}
+  </style></head><body>
+  <h1>ТАБЕЛЬ УЧЁТА РАБОЧЕГО ВРЕМЕНИ</h1>
+  <div class="meta"><b>Объект:</b> ${_tsEsc(d.obj.name)}${d.obj.client?' ('+_tsEsc(d.obj.client)+')':''}</div>
+  <div class="meta"><b>Период:</b> ${_tsEsc(d.periodMain)}</div>
+  <div class="meta"><b>Исполнитель:</b> ${_tsEsc(d.company)}</div>
+  <table>${body}</table>
+  <div class="sign">
+    <div><div class="line">Подпись заказчика / М.П.</div></div>
+    <div><div class="line">Подпись исполнителя / М.П.</div></div>
+  </div>
+  </body></html>`;
+}
+
+function exportTimesheetPDF(objId){
+  const d=buildTimesheetData(objId);if(!d)return;
+  if(!d.rows.length){alert('На объекте нет техники для табеля');return;}
+  const w=window.open('','_blank');
+  if(!w){alert('Разрешите всплывающие окна, чтобы сохранить табель в PDF');return;}
+  w.document.write(timesheetHTML(d));
+  w.document.close();w.focus();
+  setTimeout(()=>{try{w.print();}catch(e){}},400);
+}
+
+function exportTimesheetExcel(objId){
+  const d=buildTimesheetData(objId);if(!d)return;
+  if(!d.rows.length){alert('На объекте нет техники для табеля');return;}
+  const blob=new Blob(['﻿'+timesheetHTML(d)],{type:'application/vnd.ms-excel'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`Табель_${d.obj.name}_${curYear}_${pad(curEM)}.xls`;
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},100);
 }
 
 function openObjModal(id){
@@ -2944,21 +3147,53 @@ function deleteObj(id){if(!confirm('Удалить объект?'))return;fbDelO
 // ═══════════════════════════════════════════════
 // PARTNERS TAB
 // ═══════════════════════════════════════════════
+// Начисленный доход партнёра по ночным сменам, где он выбран в поле «Кто вышел на смену».
+// Сумма ночной смены = ночной тариф техники / число дней периода (как в расчёте дохода).
+// Считается на лету (документы не создаются) — полностью обратная совместимость с данными.
+function calcPartnerNightIncome(partnerId){
+  const dates=getPeriodDates(curYear,curEM);
+  const n=dates.length||1;
+  const items=[];let total=0;
+  const tag='p_'+partnerId;
+  for(const e of cfg.equipment){
+    const cs=pd.shifts[e.id]||{};
+    const perNight=Math.round((e.rates?.nightly||0)/n);
+    const obj=cfg.objects.find(o=>o.id===e.objectId);
+    for(const[date,cell] of Object.entries(cs)){
+      const t=cell.type||0;
+      if(cell.workerId!==tag)continue;
+      if(cell.status==='pending'||cell.status==='rejected')continue;
+      if(t===2||t===3){
+        items.push({date,equipName:e.name,objName:obj?obj.name:'—',amount:perNight});
+        total+=perNight;
+      }
+    }
+  }
+  items.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  return{total,items};
+}
+
 function renderPartners(){
   let h='';
   for(const p of cfg.partners){
     const exps=(pd.expenses||[]).filter(e=>e.partnerId===p.id);
     const totalExp=exps.reduce((s,e)=>s+e.amount,0);
+    const nightInc=calcPartnerNightIncome(p.id);
     h+=`<div class="c-card">
       <div class="c-card-head">
         <div><div class="c-card-title">${p.name}</div><div class="c-card-sub">${PARTNER_TYPES[p.type]||p.type}</div></div>
       </div>
       <div class="c-card-body" style="font-size:12px">
         ${p.note?`<div style="color:var(--muted);margin-bottom:8px">${p.note}</div>`:''}
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Доход по ночным сменам:</span><span style="color:var(--green);font-weight:600">${fmt(nightInc.total)} ₸</span></div>
+        ${nightInc.items.length?`<div style="margin-top:4px;margin-bottom:8px;max-height:120px;overflow-y:auto">
+          ${nightInc.items.map(it=>`<div style="display:flex;justify-content:space-between;gap:6px;padding:3px 0;border-bottom:1px solid var(--border-2);font-size:11px"><span>${fmtDate(it.date)} · ${it.equipName} · ${it.objName}</span><span style="color:var(--green);white-space:nowrap">${fmt(it.amount)} ₸</span></div>`).join('')}
+        </div>`:''}
         <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Расходы в периоде:</span><span style="color:var(--red);font-weight:600">${fmt(totalExp)} ₸</span></div>
         <div style="margin-top:6px;max-height:100px;overflow-y:auto">
           ${exps.slice(-5).map(e=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border-2);font-size:11px"><span>${fmtDate(e.date)} ${e.note||''}</span><span>${fmt(e.amount)} ₸</span></div>`).join('')}
         </div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px;border-top:1px solid var(--border);padding-top:8px;font-weight:700"><span>Итого по партнёру:</span><span style="color:${nightInc.total-totalExp>=0?'var(--green)':'var(--red)'}">${nightInc.total-totalExp>=0?'+':''}${fmt(nightInc.total-totalExp)} ₸</span></div>
       </div>
       <div class="c-card-foot">
         <button class="btn btn-secondary btn-sm" onclick="openPartnerModal('${p.id}')">✏</button>
@@ -3261,9 +3496,9 @@ function renderSummary(){
   const exps=pd.expenses||[];
   const totalExp=exps.reduce((s,e)=>s+e.amount,0);
 
-  // Salary debt
-  const totalSalary=cfg.workers.reduce((s,w)=>s+(w.salary?.monthly||0),0);
-  const totalPaid=Object.values(pd.payments||{}).flat().reduce((s,p)=>s+p.amount,0);
+  // Salary debt — начислено по факту (с учётом истории окладов и нормы дней) минус выплачено
+  let totalSalary=0,totalPaid=0;
+  for(const w of cfg.workers){const ec=calcWorkerEarnings(w);totalSalary+=ec.totalAccrued;totalPaid+=ec.pays;}
   const salDebt=totalSalary-totalPaid;
 
   // Net

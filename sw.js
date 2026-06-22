@@ -1,7 +1,7 @@
 'use strict';
 
 // Increment this version to force cache refresh on all clients
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 const CACHE_NAME = `jumix-tech-${CACHE_VERSION}`;
 
 // Core assets — always cache these on install
